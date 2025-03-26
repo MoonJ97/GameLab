@@ -1,0 +1,178 @@
+﻿@page "/"
+@rendermode InteractiveServer
+@using Blazor.Extensions
+@using Blazor.Extensions.Canvas
+@using Blazor.Extensions.Canvas.Canvas2D
+@using System.Diagnostics
+@using GameLab
+@using GameLab.Models
+@inject IJSRuntime JsRuntime;
+
+<PageTitle>Home</PageTitle>
+
+<img @ref="backgroundImage" id="bgImage" src="images/Background.png" alt="image" style="display:none;" />
+
+
+<div id="snakeCanvas" style="position: fixed; width: 100%; height: 100%">
+    <BECanvas Width="1000" Height="1000" @ref="canvasReference"></BECanvas>
+</div>
+
+
+@code
+{
+    /// <summary>
+    /// The size of one side of the square world
+    /// </summary>
+    private const int WorldSize = 1000;
+
+    /// <summary>
+    /// A class that simulates a server by generating new model data at a certain frame rate
+    /// </summary>
+    private FakeServer TheServer = new(WorldSize);
+
+    /// <summary>
+    /// The (M)odel part of MVC, represents the objects in the game
+    /// </summary>
+    private World TheWorld = new(WorldSize);
+
+    /// <summary>
+    /// C# reference to the html element for the drawing canvas
+    /// </summary>
+    private BECanvasComponent canvasReference = null!;
+
+    /// <summary>
+    /// Object attached to the canvas that has all the drawing methods
+    /// </summary>
+    private Canvas2DContext context = null!;
+
+    /// <summary>
+    /// C# reference to the html element for the background image
+    /// </summary>
+    private ElementReference backgroundImage;
+
+    /// <summary>
+    /// RNG used to simulate some long-running task
+    /// </summary>
+    Random r = new();
+
+    /// <summary>
+    /// Width of the display canvas
+    /// </summary>
+    private const int ViewWidth = 1000;
+
+    /// <summary>
+    /// Height of the display canvas
+    /// </summary>
+    private const int ViewHeight = 1000;
+
+    /// <summary>
+    /// Called after the page is rendered. We use this to know when the first page load
+    /// has occurred so we can initialize various data and start the server and drawing loops
+    /// </summary>
+    /// <param name="firstRender"></param>
+    /// <returns></returns>
+    protected override async Task OnAfterRenderAsync( bool firstRender )
+    {
+        if ( firstRender )
+        {
+            this.context = await this.canvasReference.CreateCanvas2DAsync();
+
+            // Simulate connecting to a server
+            new Thread( () => NetworkLoop() ).Start();
+
+            // Do not await the async GameLoop, so that it happens asynchronously
+            GameLoop();
+        }
+
+    }
+
+    /// <summary>
+    /// Simulates network data coming from a game server.
+    /// There is no real network connection, but the "GetData" call will delay
+    /// for an amount of time similar to waiting for network data from a real server.
+    /// </summary>
+    private void NetworkLoop()
+    {
+        while ( true )
+        {
+            TheServer.GetData( out List<Player> newShips, out List<Powerup> newPows );
+
+            // Update the world, given the new ships and powerups sent by the server
+            foreach ( Player s in newShips )
+            {
+                if ( !s.Active )
+                    TheWorld.Players.Remove( s.ID );
+                else
+                    TheWorld.Players[s.ID] = s;
+            }
+
+            foreach ( Powerup pow in newPows )
+            {
+                if ( !pow.Active )
+                    TheWorld.Powerups.Remove( pow.ID );
+                else
+                    TheWorld.Powerups[pow.ID] = pow;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Renders the view once every 20 milliseconds (50 frames/second)
+    /// </summary>
+    private async void GameLoop()
+    {
+        while ( true )
+        {
+            Thread.Sleep( 20 );
+            await DrawFrame();
+        }
+    }
+
+    /// <summary>
+    /// Draws one frame of the game
+    /// </summary>
+    /// <returns></returns>
+    private async Task DrawFrame()
+    {
+        // batch the drawing calls for better performance
+        await context.BeginBatchAsync();
+
+        await context.DrawImageAsync( backgroundImage, 0, 0, ViewWidth, ViewHeight );
+
+
+        foreach ( Player p in TheWorld.Players.Values )
+        {
+            //while ( r.Next() % 10000 != 0 ) ; // ignore this loop for now
+
+            // prep to draw a circle
+            await context.SetLineWidthAsync( 5 );
+
+            // red for team 0, blue for team 1
+            if ( p.ID % 2 == 0 )
+                await context.SetStrokeStyleAsync( $"rgb( 255, 0, 0 )" );
+            else          
+                await context.SetStrokeStyleAsync( $"rgb( 0, 0, 255 )" );
+
+            // draw the circle
+            await context.BeginPathAsync();
+            await context.ArcAsync( p.Position.X, p.Position.Y, 10, 0, 2 * Math.PI );
+            await context.StrokeAsync();
+        }
+
+        foreach ( Powerup p in TheWorld.Powerups.Values )
+        {
+            // smaller yellow circle for powerups
+            await context.SetLineWidthAsync( 5 );
+            await context.SetStrokeStyleAsync( $"rgb( 255, 255, 0 )" );
+            await context.BeginPathAsync();
+            await context.ArcAsync( p.Position.X, p.Position.Y, 3, 0, 2 * Math.PI );
+            await context.StrokeAsync();
+        }
+
+        // finish batch drawing
+        await context.EndBatchAsync();
+
+        StateHasChanged();
+    }
+
+}
